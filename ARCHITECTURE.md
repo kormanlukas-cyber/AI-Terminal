@@ -1,59 +1,58 @@
 # Architecture Overview
 
-This project is a terminal-focused application skeleton for AI-powered workflows. It is intentionally simple: a CLI entry point, a command registry, and a shell-like session loop that can later be connected to real AI providers or local models.
+This project is a terminal-based AI shell designed to be easy to extend. It combines a command router, a user-facing interactive prompt, and a pluggable AI adapter so the app can answer natural-language questions or execute built-in CLI operations.
 
 ```mermaid
 flowchart TD
-    User["User"] --> Terminal["AI Terminal Shell"]
-    Terminal --> CommandRouter["Command Router"]
-    CommandRouter --> Help["help"]
-    CommandRouter --> Status["status"]
-    CommandRouter --> Echo["echo"]
-    CommandRouter --> Exit["exit"]
-
-    CommandRouter --> AI["AI Service Adapter (future)"]
-    AI --> Model["LLM / AI Provider"]
+    User["User"] --> Shell["Interactive Terminal"]
+    Shell --> Router["Command Router"]
+    Router --> Builtins["Built-in Commands"]
+    Builtins --> FS["Filesystem Utilities"]
+    Builtins --> System["System Info Commands"]
+    Router --> AI["AI Adapter"]
+    AI --> Provider["OpenAI-compatible API"]
 
     subgraph App["Application Layer"]
-        Terminal
-        CommandRouter
-        Help
-        Status
-        Echo
-        Exit
+        Shell
+        Router
+        Builtins
+        AI
     end
 
-    subgraph Infra["Runtime Environment"]
-        Node["Node.js Runtime"]
-        OS["Terminal / Console"]
+    subgraph Runtime["Runtime Environment"]
+        Node["Node.js"]
+        Console["Terminal / Console"]
     end
 
-    Terminal --> Node
-    Terminal --> OS
+    Shell --> Node
+    Shell --> Console
 ```
 
 ## Components
 
 - `src/index.js`
-  - Application entry point.
-  - Starts the terminal session and manages the interactive loop.
+  - Bootstraps the terminal session.
 
 - `src/terminal.js`
-  - Handles input/output operations.
-  - Reads user commands and prints responses.
+  - Manages prompt lifecycle and input processing.
+  - Tracks command history and emits colored output.
 
 - `src/commands.js`
-  - Central registry for supported commands.
-  - Keeps command logic isolated and easy to extend.
+  - Stores the built-in commands.
+  - Includes help, status, echo, ls, pwd, date, history, clear, ask, and exit.
+
+- `src/ai.js`
+  - Sends prompts to an OpenAI-compatible API using environment variables.
+  - Produces AI responses for the terminal shell.
 
 - `.env.example`
-  - Template for environment configuration.
-  - Useful when connecting to external AI APIs.
+  - Provides the configuration template for API credentials.
 
 ## Runtime Flow
 
-1. The terminal starts in the console.
+1. The terminal starts and prints the prompt.
 2. The user enters a command.
-3. The command router matches it to a built-in handler.
-4. The system prints a result in the terminal.
-5. Future integrations can route the command to an AI model or external service.
+3. The command router resolves the command name.
+4. Built-in commands execute locally in Node.js.
+5. The `ask` command forwards the prompt to the AI provider.
+6. Output is printed to the console, and command history is updated.

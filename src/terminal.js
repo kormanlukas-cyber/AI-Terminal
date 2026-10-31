@@ -1,48 +1,88 @@
-import readline from 'node:readline';
-import { commands } from './commands.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import chalk from 'chalk';
+import { askAI, getSystemInfo, listDirectory, resolvePath, readFileText } from './ai.js';
 
-export function createTerminal() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-  });
+export const commands = {
+  help: () => {
+    return [
+      'Available commands:',
+      '  help            Show commands',
+      '  status          Show terminal status',
+      '  echo <text>     Print a message',
+      '  pwd             Show current working directory',
+      '  ls [path]       List directory contents',
+      '  date            Show current date and time',
+      '  history         Show command history',
+      '  clear           Clear the terminal',
+      '  ask <prompt>    Ask an AI question',
+      '  cat <file>      Read a file',
+      '  exit            Quit the terminal',
+    ].join('\n');
+  },
 
-  return {
-    rl,
-    async start() {
-      console.log('AI Terminal ready. Type "help" to see commands.');
+  status: () => {
+    const info = getSystemInfo();
+    return [
+      'AI Terminal status',
+      `Platform: ${info.platform}`,
+      `Arch: ${info.arch}`,
+      `Node: ${info.node}`,
+      `Working directory: ${info.cwd}`,
+    ].join('\n');
+  },
 
-      const handleInput = (input) => {
-        const trimmed = input.trim();
+  echo: (args) => args.join(' ') || 'No message provided.',
 
-        if (!trimmed) {
-          return;
-        }
+  pwd: () => process.cwd(),
 
-        const [command, ...args] = trimmed.split(/\s+/);
-        const handler = commands[command];
+  ls: (args) => {
+    const target = args[0] ? resolvePath(args[0]) : process.cwd();
+    const entries = listDirectory(target);
+    return entries.length ? entries.join('\n') : '(empty directory)';
+  },
 
-        if (!handler) {
-          console.log(`Command not found: ${command}`);
-          return;
-        }
+  date: () => new Date().toString(),
 
-        const result = handler(args.join(' '));
-        if (result !== undefined) {
-          console.log(result);
-        }
-      };
+  history: (_, context) => {
+    if (!context.state.history.length) {
+      return 'No commands in history.';
+    }
+    return context.state.history.map((entry, index) => `${index + 1}. ${entry}`).join('\n');
+  },
 
-      rl.on('line', handleInput);
+  clear: () => {
+    console.clear();
+    return '';
+  },
 
-      rl.on('close', () => {
-        console.log('Session closed.');
-        process.exit(0);
-      });
-    },
-    close() {
-      rl.close();
-    },
-  };
+  ask: async (args) => {
+    const prompt = args.join(' ');
+    if (!prompt) {
+      return 'Usage: ask <your question>';
+    }
+    return await askAI(prompt);
+  },
+
+  cat: (args) => {
+    const filePath = args.join(' ');
+    if (!filePath) {
+      return 'Usage: cat <file path>';
+    }
+
+    const resolved = resolvePath(filePath);
+    if (!fs.existsSync(resolved)) {
+      return `File not found: ${filePath}`;
+    }
+
+    return readFileText(resolved);
+  },
+
+  exit: () => {
+    process.exit(0);
+  },
+};
+
+export function getCommandList() {
+  return Object.keys(commands);
 }
