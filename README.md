@@ -1,17 +1,29 @@
 # AI Terminal
 
-A terminal-first AI agent that blends a local CLI shell with an OpenAI-compatible LLM and built-in tools.
+A terminal-first AI agent that combines a local command shell with OpenAI-compatible AI assistance and built-in tool execution.
 
 ## Features
 
 - Interactive readline shell
 - Command history tracking
-- Colorized output
-- Built-in local commands such as `help`, `status`, `ls`, `pwd`, `date`, `history`, and `cat`
-- AI-powered `ask` command
-- Agent mode for higher-level prompts
-- Tool execution layer for filesystem and shell operations
-- Extensible architecture for future plugins or tools
+- Colorized terminal output
+- Built-in local commands:
+  - help
+  - status
+  - echo
+  - ls
+  - pwd
+  - date
+  - history
+  - clear
+  - cat
+  - ask
+  - agent
+  - tool
+  - exit
+- AI-powered `ask` and `agent` commands
+- Tool execution for filesystem and system tasks
+- Lightweight architecture ready for extension
 
 ## Quick start
 
@@ -21,7 +33,7 @@ cp .env.example .env
 npm start
 ```
 
-Then try commands like:
+Try commands like:
 
 ```bash
 help
@@ -31,7 +43,7 @@ ls
 pwd
 date
 ask Explain what this project does.
-agent Summarize the project and suggest next improvements.
+agent Summarize the repo and suggest next improvements.
 history
 clear
 exit
@@ -39,30 +51,64 @@ exit
 
 ## Environment
 
-Required for AI requests:
+Create a `.env` file based on `.env.example`:
 
 ```bash
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-If the API key is missing, the app will still run the local terminal commands and return a helpful message when AI features are used.
+If no API key is configured, the terminal still works for local commands.
+
+## Deployment
+
+### Local run
+
+```bash
+npm install
+cp .env.example .env
+npm start
+```
+
+### Docker
+
+```bash
+docker build -t ai-terminal .
+docker run -it --rm --env-file .env ai-terminal
+```
+
+### Docker Compose
+
+```bash
+docker compose up --build
+```
 
 ## Architecture
 
-The app is organized into a shell, a command registry, a tool layer, and an AI adapter.
+The project is split into four main parts:
 
-- `src/index.js` starts the terminal
-- `src/terminal.js` manages prompt lifecycle and IO
-- `src/commands.js` defines shell commands
-- `src/ai.js` contains the OpenAI-compatible API client
-- `src/tools.js` exposes local tools such as file and system inspection
-- `src/agent.js` coordinates task execution and prompt routing
+- shell I/O and prompt handling
+- command routing
+- tool layer
+- AI adapter
+
+Key files:
+
+- `src/index.js`
+- `src/terminal.js`
+- `src/commands.js`
+- `src/agent.js`
+- `src/tools.js`
+- `src/ai.js`
 
 ## Example agent usage
 
 ```bash
-agent List the repo files and explain the key modules.
-agent Read README.md and summarize the project quickly.
+agent List the repository files and explain the main modules.
+agent Read README.md and summarize the current project.
 agent Use the available tools to inspect the current working directory.
 ```
+
+## Notes
+
+This repo is a solid base for an AI terminal agent, and it is designed to be extended with more tools, more commands, and richer agent behavior.

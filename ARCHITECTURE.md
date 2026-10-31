@@ -1,16 +1,16 @@
-# Architecture Overview
+# AI Terminal
 
-This project is an interactive AI terminal that combines a local command shell with a lightweight agent layer. It is designed to respond to user prompts, run local filesystem commands, and optionally forward requests to an OpenAI-compatible API.
+A terminal-first AI agent that combines a local command shell with OpenAI-compatible AI assistance and built-in tool execution.
 
 ```mermaid
 flowchart TD
-    User["User"] --> Shell["Terminal Shell"]
+    User["User"] --> Shell["Interactive Terminal"]
     Shell --> Router["Command Router"]
     Router --> Local["Built-in Commands"]
     Router --> Agent["Agent Layer"]
-    Agent --> Tools["Local Tools"]
-    Tools --> FS["Filesystem"]
-    Tools --> OS["System Info / Shell"]
+    Agent --> Tools["Tool Layer"]
+    Tools --> Filesystem["Filesystem Tools"]
+    Tools --> System["System + Shell Tools"]
     Agent --> AI["AI Adapter"]
     AI --> LLM["OpenAI-compatible model"]
 
@@ -23,9 +23,9 @@ flowchart TD
         AI
     end
 
-    subgraph Runtime["Runtime"]
+    subgraph Runtime["Runtime Environment"]
         Node["Node.js"]
-        Console["Console / Terminal"]
+        Console["Terminal / Console"]
     end
 
     Shell --> Node
@@ -35,28 +35,29 @@ flowchart TD
 ## Components
 
 - `src/index.js`
-  - Bootstraps the terminal session.
+  - Starts the terminal session.
 
 - `src/terminal.js`
-  - Owns the interactive prompt, history, and color output.
+  - Manages the readline loop, prompt display, history, and command execution.
 
 - `src/commands.js`
-  - Houses the built-in CLI commands and agent command handlers.
-
-- `src/ai.js`
-  - Talks to the OpenAI-compatible API.
-
-- `src/tools.js`
-  - Exposes filesystem and environment tools used by the agent.
+  - Defines built-in commands and command dispatch behavior.
 
 - `src/agent.js`
-  - Coordinates task execution and decides whether to use local tools or AI.
+  - Coordinates the agent flow and exposes tool execution.
+
+- `src/tools.js`
+  - Exposes filesystem and system helper functions.
+
+- `src/ai.js`
+  - Performs AI requests using the OpenAI API format.
 
 ## Runtime Flow
 
-1. The user types a command at the terminal prompt.
-2. The shell resolves the command name via the registry.
-3. Built-in commands execute locally in Node.js.
-4. The `ask` command and `agent` command may call the AI provider.
-5. Tool-backed prompts can inspect the filesystem or query system information.
-6. Results are printed to the terminal and added to the command history.
+1. The user types a command.
+2. The terminal parses the input and resolves the matching command.
+3. Built-in commands run locally in Node.js.
+4. The `ask` command sends a prompt to the AI provider.
+5. The `agent` command uses instructions and tool context to decide how to respond.
+6. Tool-backed requests can read files, inspect directories, or run shell commands.
+7. Output is printed to the terminal and saved to command history.
