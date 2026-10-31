@@ -95,14 +95,15 @@ h1 {
 
 .chat-panel {
   min-height: 280px;
-  max-height: 46vh;
+  max-height: 42vh;
   overflow-y: auto;
   padding: 18px 20px;
   background: rgba(18, 26, 47, 0.4);
 }
 
 .tool-log-panel,
-.insight-panel {
+.insight-panel,
+.plan-panel {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: rgba(12, 18, 31, 0.8);
@@ -110,7 +111,8 @@ h1 {
 }
 
 .tool-log-header,
-.insight-header {
+.insight-header,
+.plan-header {
   margin-bottom: 8px;
   color: var(--muted);
   font-size: 0.78rem;
@@ -118,13 +120,25 @@ h1 {
   letter-spacing: 0.08em;
 }
 
-.tool-log-list {
+.tool-log-list,
+.plan-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.plan-list {
+  display: block;
+  padding-left: 20px;
+}
+
+.plan-list li {
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.5;
 }
 
 .tool-log-item {
@@ -158,6 +172,7 @@ h1 {
   color: var(--text);
   font-size: 0.9rem;
   line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .message {

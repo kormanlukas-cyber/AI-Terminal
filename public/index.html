@@ -27,6 +27,7 @@ function normalizeSession(sessionId) {
       lastValidation: null,
       recentPlans: [],
       architecture: null,
+      lastDiff: null,
     },
   };
 
@@ -134,7 +135,7 @@ function searchFiles(query) {
           matches.push(relativePath);
         }
       } catch {
-        // Ignore binary or unreadable files.
+        // Ignore unreadable binary files.
       }
     }
   }
@@ -211,7 +212,8 @@ function inferArchitecture() {
       html: htmlFiles,
       css: cssFiles,
     },
-    summary: 'This project is a lightweight web application with JavaScript server logic, browser UI files, and a small local tool layer.',
+    summary:
+      'This project is a lightweight web application with JavaScript server logic, browser UI files, and a small local tool layer.',
   };
 }
 
@@ -253,6 +255,36 @@ function runProjectValidation(sessionId) {
 
   recordToolLog(sessionId, 'validation', 'ok', summary);
   return summary;
+}
+
+function buildAgentPlan(message, session) {
+  const lower = String(message).toLowerCase();
+  const projectOverview = session?.memory?.projectOverview || getProjectOverview();
+  const architecture = session?.memory?.architecture || inferArchitecture();
+
+  const phases = [
+    'Inspect the repo state and relevant files.',
+    'Identify the exact issue or task in the current project context.',
+    'Apply the smallest safe change when required.',
+    'Validate the result with available checks and report the outcome.',
+  ];
+
+  if (lower.includes('fix') || lower.includes('bug') || lower.includes('error') || lower.includes('patch')) {
+    phases[1] = 'Trace the bug or failing behavior and confirm the root cause in the relevant files.';
+    phases[2] = 'Patch only the specific file(s) that implement the root cause.';
+  }
+
+  if (lower.includes('read') || lower.includes('show') || lower.includes('find')) {
+    phases[0] = 'Inspect the relevant files and symbols before answering.';
+    phases[2] = 'Answer with concrete file references and concise findings.';
+  }
+
+  return {
+    summary: `Plan for: ${message}`,
+    phases,
+    architecture: architecture.summary,
+    projectFiles: projectOverview.files.slice(0, 12),
+  };
 }
 
 function executeToolCall(sessionId, toolCall) {
@@ -410,6 +442,12 @@ const AGENT_TOOLS = [
 ];
 
 async function runAgent(message, sessionId, sessionMessages) {
+  const session = getSession(sessionId);
+  const plan = buildAgentPlan(message, session);
+  session.memory.recentPlans = session.memory.recentPlans || [];
+  session.memory.recentPlans.unshift(plan);
+  session.memory.recentPlans = session.memory.recentPlans.slice(0, 3);
+
   const systemPrompt = `You are a senior software engineer working in this repository.
 
 Rules:
@@ -421,7 +459,10 @@ Rules:
 - if a change is required, patch only the relevant files
 - after planned edits, run a validation step
 - summarize the result clearly
-- if the task is ambiguous, inspect before acting`;
+- follow a structured workflow: inspect -> plan -> change -> validate -> report
+
+Current plan for this task:
+${JSON.stringify(plan, null, 2)}`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -551,7 +592,7 @@ function fallbackAgent(message, sessionId) {
     return result;
   }
 
-  const generic = 'I can help with project structure, debugging, file reads, searches, and read-only shell commands. Try: “list files”, “read README.md”, “search for auth”, or “system info”.';
+  const generic = 'I can help with project structure, debugging, file reads, searches, read-only shell commands, and structured project workflows. Try: “list files”, “read README.md”, “search for auth”, “fix a bug”, or “system info”.';
   recordToolLog(sessionId, 'fallback_generic', 'ok', generic);
   return generic;
 }
@@ -583,10 +624,15 @@ app.post('/api/chat', async (req, res) => {
       lastValidation: null,
       recentPlans: [],
       architecture: null,
+      lastDiff: null,
     };
 
     if (mode === 'agent') {
-      recordToolLog(activeSessionId, 'plan', 'pending', `Planning how to answer: ${userMessage}`);
+      const plan = buildAgentPlan(userMessage, session);
+      session.memory.recentPlans = session.memory.recentPlans || [];
+      session.memory.recentPlans.unshift(plan);
+      session.memory.recentPlans = session.memory.recentPlans.slice(0, 3);
+      recordToolLog(activeSessionId, 'plan', 'pending', JSON.stringify(plan));
 
       if (!apiKey) {
         reply = fallbackAgent(userMessage, activeSessionId);
@@ -654,6 +700,7 @@ app.post('/api/chat', async (req, res) => {
       toolUsed: mode === 'agent',
       toolLog: sessionState.toolLog.slice(-10),
       memory: sessionState.memory,
+      plan: sessionState.memory.recentPlans?.[0] || null,
     });
   } catch (error) {
     res.status(500).json({

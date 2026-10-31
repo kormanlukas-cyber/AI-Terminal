@@ -6,6 +6,7 @@ const modeSelect = document.getElementById('modeSelect');
 const toolLogList = document.getElementById('toolLogList');
 const toolLogPanel = document.getElementById('toolLogPanel');
 const insightBody = document.getElementById('insightBody');
+const planList = document.getElementById('planList');
 
 const sessionKey = 'ai-terminal-session-id';
 const sessionId = localStorage.getItem(sessionKey) || crypto.randomUUID();
@@ -32,6 +33,24 @@ function renderToolLog(logEntries = []) {
   });
 }
 
+function renderPlan(plan = null) {
+  if (!planList) return;
+  planList.innerHTML = '';
+
+  if (!plan || !plan.phases || !plan.phases.length) {
+    const item = document.createElement('li');
+    item.textContent = 'No active plan.';
+    planList.appendChild(item);
+    return;
+  }
+
+  plan.phases.forEach((phase) => {
+    const item = document.createElement('li');
+    item.textContent = phase;
+    planList.appendChild(item);
+  });
+}
+
 function renderInsight(memory = {}) {
   if (!insightBody) return;
 
@@ -41,7 +60,11 @@ function renderInsight(memory = {}) {
   }
 
   const architecture = memory.architecture;
-  insightBody.textContent = `${architecture.summary}\n\nFiles: ${architecture.types.js.slice(0, 6).join(', ') || 'none'}${architecture.types.html.length ? `\nHTML: ${architecture.types.html.join(', ')}` : ''}${architecture.types.css.length ? `\nCSS: ${architecture.types.css.join(', ')}` : ''}`;
+  const jsNames = architecture.types?.js?.slice(0, 6).join(', ') || 'none';
+  const htmlNames = architecture.types?.html?.slice(0, 6).join(', ') || '';
+  const cssNames = architecture.types?.css?.slice(0, 6).join(', ') || '';
+
+  insightBody.textContent = `${architecture.summary}\n\nFiles: ${jsNames}${htmlNames ? `\nHTML: ${htmlNames}` : ''}${cssNames ? `\nCSS: ${cssNames}` : ''}`;
 }
 
 function addMessage(role, text) {
@@ -91,6 +114,7 @@ async function sendMessage(event) {
     }
 
     renderToolLog(data.toolLog || []);
+    renderPlan(data.plan || null);
     if (data.memory) renderInsight(data.memory);
     addMessage('bot', data.reply || 'No response returned.');
   } catch (error) {
@@ -108,6 +132,7 @@ clearBtn.addEventListener('click', () => {
   `;
   localStorage.setItem(sessionKey, crypto.randomUUID());
   renderToolLog([]);
+  renderPlan(null);
   renderInsight({});
 });
 
@@ -118,5 +143,6 @@ if (chatPanel) {
 }
 
 renderToolLog([]);
+renderPlan(null);
 renderInsight({});
 

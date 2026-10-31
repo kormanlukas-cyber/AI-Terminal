@@ -47,6 +47,13 @@
         <div id="insightBody" class="insight-body">Ready.</div>
       </section>
 
+      <section class="plan-panel" id="planPanel">
+        <div class="plan-header">
+          <strong>Execution plan</strong>
+        </div>
+        <ol id="planList" class="plan-list"></ol>
+      </section>
+
       <form id="chatForm" class="composer">
         <input
           id="messageInput"
