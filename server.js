@@ -1,80 +1,485 @@
-const chatForm = document.getElementById('chatForm');
-const chatPanel = document.getElementById('chatPanel');
-const messageInput = document.getElementById('messageInput');
-const clearBtn = document.getElementById('clearBtn');
-const modeSelect = document.getElementById('modeSelect');
+import express from 'express';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
+import crypto from 'node:crypto';
+import 'dotenv/config';
 
-const sessionKey = 'ai-terminal-session-id';
-const sessionId = localStorage.getItem(sessionKey) || crypto.randomUUID();
-localStorage.setItem(sessionKey, sessionId);
+const app = express();
+const port = Number(process.env.PORT) || 3000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const MAX_HISTORY = 18;
+const sessions = new Map();
 
-function addMessage(role, text) {
-  const wrapper = document.createElement('div');
-  wrapper.className = `message ${role}`;
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
-  const label = document.createElement('strong');
-  label.textContent = role === 'user' ? 'You' : 'Assistant';
+const AGENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_directory',
+      description: 'List the files and folders in a project directory.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path from the project root, like . or src' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Read the contents of a text file in the project.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path from the project root, like README.md or src/index.js' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_files',
+      description: 'Search files for a text query. Useful for finding symbols, config entries, or code references.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Words or symbols to search for inside project files' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_system_info',
+      description: 'Return runtime and OS environment information.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_shell',
+      description: 'Run a safe read-only shell command in the project directory.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'Only allow safe read-only shell commands' },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: 'Create or overwrite a text file inside the project root.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path from the project root' },
+          content: { type: 'string', description: 'Text content to write' },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
+];
 
-  const textNode = document.createElement('p');
-  textNode.textContent = text;
-
-  wrapper.appendChild(label);
-  wrapper.appendChild(textNode);
-  chatPanel.appendChild(wrapper);
-  chatPanel.scrollTop = chatPanel.scrollHeight;
+function getSession(sessionId) {
+  if (!sessionId) return null;
+  if (!sessions.has(sessionId)) {
+    sessions.set(sessionId, { messages: [] });
+  }
+  return sessions.get(sessionId);
 }
 
-async function sendMessage(event) {
-  event.preventDefault();
+function appendMessage(sessionId, role, content) {
+  const session = getSession(sessionId);
+  if (!session) return;
 
-  const text = messageInput.value.trim();
-  if (!text) return;
+  const trimmed = String(content ?? '').trim();
+  if (!trimmed) return;
 
-  const selectedMode = modeSelect.value;
-  addMessage('user', text);
-  messageInput.value = '';
-
-  const placeholder = document.createElement('div');
-  placeholder.className = 'message bot';
-  placeholder.innerHTML = '<strong>Assistant</strong><p>Thinking...</p>';
-  chatPanel.appendChild(placeholder);
-
-  try {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, sessionId, mode: selectedMode }),
-    });
-
-    const data = await response.json();
-    placeholder.remove();
-
-    if (!response.ok) {
-      addMessage('bot', data.error || 'Something went wrong.');
-      return;
-    }
-
-    const responseText = data.toolUsed ? data.reply : data.reply || 'No response returned.';
-    addMessage('bot', responseText);
-  } catch (error) {
-    placeholder.remove();
-    addMessage('bot', 'Unable to reach the AI service right now.');
+  session.messages.push({ role, content: trimmed });
+  if (session.messages.length > MAX_HISTORY * 2) {
+    session.messages = session.messages.slice(-MAX_HISTORY * 2);
   }
 }
 
-clearBtn.addEventListener('click', () => {
-  chatPanel.innerHTML = `
-    <div class="message bot">
-      <strong>Assistant</strong>
-      <p>Conversation cleared. Ask me anything.</p>
-    </div>
-  `;
-  localStorage.setItem(sessionKey, crypto.randomUUID());
+function resolveProjectPath(targetPath = '.') {
+  const safeTarget = path.resolve(__dirname, targetPath || '.');
+  const root = path.resolve(__dirname);
+
+  if (safeTarget !== root && !safeTarget.startsWith(root + path.sep)) {
+    throw new Error('Refusing to access a path outside the project root.');
+  }
+
+  return safeTarget;
+}
+
+function listDirectory(target = '.') {
+  const safeTarget = resolveProjectPath(target);
+  const entries = fs.readdirSync(safeTarget, { withFileTypes: true });
+  return entries
+    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function readFile(targetPath) {
+  const safeTarget = resolveProjectPath(targetPath);
+  return fs.readFileSync(safeTarget, 'utf8');
+}
+
+function writeFile(targetPath, content) {
+  const safeTarget = resolveProjectPath(targetPath);
+  const dir = path.dirname(safeTarget);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(safeTarget, String(content), 'utf8');
+  return `Wrote ${targetPath}`;
+}
+
+function searchFiles(query) {
+  if (!query || !String(query).trim()) {
+    return []; 
+  }
+
+  const root = path.resolve(__dirname);
+  const matches = [];
+
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (entry.name === '.git' || entry.name === 'node_modules') continue;
+
+      const fullPath = path.join(currentDir, entry.name);
+      const relativePath = path.relative(root, fullPath).split(path.sep).join('/');
+
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+
+      try {
+        const text = fs.readFileSync(fullPath, 'utf8');
+        if (text.toLowerCase().includes(String(query).toLowerCase())) {
+          matches.push(relativePath);
+        }
+      } catch {
+        // Ignore unreadable binary files silently.
+      }
+    }
+  }
+
+  walk(root);
+  return matches.slice(0, 50);
+}
+
+function getSystemInfo() {
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    node: process.version,
+    cwd: process.cwd(),
+    home: os.homedir(),
+    temp: os.tmpdir(),
+  };
+}
+
+function runSafeShell(command) {
+  const trimmed = String(command || '').trim();
+  if (!trimmed) return 'No command provided.';
+
+  const allowed = [
+    /^pwd$/i,
+    /^ls(?:\s+.*)?$/i,
+    /^echo\s+.+$/i,
+    /^node\s+-v$/i,
+    /^npm\s+-v$/i,
+    /^git\s+status(?:\s+.*)?$/i,
+    /^git\s+branch(?:\s+.*)?$/i,
+    /^cat\s+.+$/i,
+    /^head\s+.+$/i,
+    /^tail\s+.+$/i,
+  ];
+
+  const isAllowed = allowed.some((pattern) => pattern.test(trimmed));
+  if (!isAllowed) {
+    throw new Error('Shell access is restricted to safe read-only commands.');
+  }
+
+  try {
+    return execSync(trimmed, {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (error) {
+    return error.stdout?.toString() || error.stderr?.toString() || error.message;
+  }
+}
+
+function executeToolCall(toolCall) {
+  const { name, arguments: args = {} } = toolCall;
+
+  switch (name) {
+    case 'list_directory': {
+      const target = args.path || '.';
+      return `Directory listing for ${target}:\n${listDirectory(target).join('\n')}`;
+    }
+    case 'read_file': {
+      const content = readFile(args.path || '.');
+      return `File: ${args.path || '.'}\n\n${content.slice(0, 8000)}`;
+    }
+    case 'search_files': {
+      const matches = searchFiles(args.query || '');
+      return matches.length
+        ? `Search results for "${args.query}":\n${matches.join('\n')}`
+        : `No matches found for "${args.query}".`;
+    }
+    case 'get_system_info': {
+      return `System info:\n${JSON.stringify(getSystemInfo(), null, 2)}`;
+    }
+    case 'run_shell': {
+      return `Shell output:\n${runSafeShell(args.command || '')}`;
+    }
+    case 'write_file': {
+      return writeFile(args.path || '', args.content || '');
+    }
+    default:
+      return `Unsupported tool: ${name}`;
+  }
+}
+
+async function runAgent(message, sessionMessages) {
+  const systemPrompt = `You are the best AI coding agent in the room.
+
+Rules:
+- Be concise, accurate, and helpful.
+- Prefer using tools to inspect the project before answering.
+- Keep answers grounded in the actual repository content.
+- For file tasks, mention exact file paths and concise observations.
+- Never use destructive commands.
+- Use safe read-only shell commands when needed.
+- If you need to write, do it only with the write_file tool.
+- If the user asks for project overview, inspect the files first.`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...sessionMessages.slice(-MAX_HISTORY),
+    { role: 'user', content: message },
+  ];
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      temperature: 0.2,
+      messages,
+      tools: AGENT_TOOLS,
+      tool_choice: 'auto',
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  const choice = data?.choices?.[0];
+  const assistantMessage = choice?.message;
+
+  if (!assistantMessage) {
+    return 'No response returned by the model.';
+  }
+
+  if (assistantMessage.tool_calls && assistantMessage.tool_calls.length) {
+    const toolResults = assistantMessage.tool_calls.map((toolCall) => {
+      const result = executeToolCall(toolCall.function);
+      return {
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        name: toolCall.function.name,
+        content: result,
+      };
+    });
+
+    const followUpMessages = [
+      ...messages,
+      assistantMessage,
+      ...toolResults,
+    ];
+
+    const followUpResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.2,
+        messages: followUpMessages,
+      }),
+    });
+
+    if (!followUpResponse.ok) {
+      const errorText = await followUpResponse.text();
+      throw new Error(`Follow-up model call failed: ${followUpResponse.status} ${errorText}`);
+    }
+
+    const followUpData = await followUpResponse.json();
+    return followUpData?.choices?.[0]?.message?.content?.trim() || 'No response returned.';
+  }
+
+  return assistantMessage.content?.trim() || 'No response returned.';
+}
+
+function fallbackAgent(message) {
+  const lower = message.toLowerCase();
+
+  if (lower.includes('system info') || lower.includes('what environment') || lower.includes('tell me about this machine')) {
+    return `System info:\n${JSON.stringify(getSystemInfo(), null, 2)}`;
+  }
+
+  if (lower.includes('list files') || lower.includes('list directory') || lower.includes('show files') || lower.includes('project files')) {
+    return `Project files:\n${listDirectory('.').join('\n')}`;
+  }
+
+  if (lower.includes('pwd') || lower.includes('working directory') || lower.includes('where am i')) {
+    return `Working directory:\n${__dirname}`;
+  }
+
+  if (lower.includes('git status') || lower.includes('status')) {
+    return `Shell output:\n${runSafeShell('git status --short')}`;
+  }
+
+  const searchMatch = message.match(/search\s+(?:for\s+)?(.+)/i);
+  if (searchMatch) {
+    const query = searchMatch[1].trim();
+    const matches = searchFiles(query);
+    return matches.length ? `Search results for "${query}":\n${matches.join('\n')}` : `No matches found for "${query}".`;
+  }
+
+  const readMatch = message.match(/(?:read|open|view|show|cat)\s+(?:file\s+)?["']?([^\n"'\s]+)["']?/i);
+  if (readMatch) {
+    const target = readMatch[1];
+    try {
+      return `File: ${target}\n\n${readFile(target).slice(0, 4000)}`;
+    } catch (error) {
+      return `Could not read "${target}": ${error.message}`;
+    }
+  }
+
+  if (lower.includes('repo') || lower.includes('project overview') || lower.includes('what is in this app')) {
+    return `Project overview:\n${listDirectory('.').join('\n')}`;
+  }
+
+  return 'I can help with project structure, debugging, file reads, searches, and read-only shell commands. Try: “list files”, “read README.md”, “search for auth”, or “system info”.';
+}
+
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, status: 'AI Terminal web app is running' });
 });
 
-chatForm.addEventListener('submit', sendMessage);
+app.post('/api/chat', async (req, res) => {
+  const { message, sessionId, mode = 'chat' } = req.body || {};
 
-if (chatPanel) {
-  chatPanel.scrollTop = chatPanel.scrollHeight;
-}
-"}],
+  if (!message || !String(message).trim()) {
+    return res.status(400).json({ error: 'A message is required.' });
+  }
+
+  const activeSessionId = sessionId || crypto.randomUUID();
+  const session = getSession(activeSessionId);
+  const userMessage = String(message).trim();
+  appendMessage(activeSessionId, 'user', userMessage);
+
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  try {
+    let reply;
+
+    if (mode === 'agent') {
+      if (!apiKey) {
+        reply = fallbackAgent(userMessage);
+      } else {
+        reply = await runAgent(userMessage, session.messages.slice(-MAX_HISTORY));
+      }
+    } else {
+      if (!apiKey) {
+        return res.status(400).json({
+          error: 'OPENAI_API_KEY is not configured. Add it to your .env file before using chat mode.',
+        });
+      }
+
+      const systemPrompt =
+        'You are the best AI coding assistant. Keep answers concise, technically accurate, and grounded in the project context when available.';
+
+      const openaiMessages = [
+        { role: 'system', content: systemPrompt },
+        ...session.messages.slice(-MAX_HISTORY),
+      ];
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          temperature: 0.3,
+          messages: openaiMessages,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      reply = data?.choices?.[0]?.message?.content?.trim() || 'No response returned.';
+    }
+
+    appendMessage(activeSessionId, 'assistant', reply);
+
+    res.json({
+      reply,
+      sessionId: activeSessionId,
+      mode,
+      toolUsed: mode === 'agent',
+      toolResult: mode === 'agent' ? reply : null,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message || 'Unable to complete the AI request.',
+    });
+  }
+});
+
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(port, () => {
+  console.log(`AI Terminal web app running at http://localhost:${port}`);
+});
