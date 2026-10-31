@@ -1,114 +1,68 @@
-# AI Terminal
+const chatForm = document.getElementById('chatForm');
+const chatPanel = document.getElementById('chatPanel');
+const messageInput = document.getElementById('messageInput');
+const clearBtn = document.getElementById('clearBtn');
 
-A terminal-first AI agent that combines a local command shell with OpenAI-compatible AI assistance and built-in tool execution.
+function addMessage(role, text) {
+  const wrapper = document.createElement('div');
+  wrapper.className = `message ${role}`;
 
-## Features
+  const label = document.createElement('strong');
+  label.textContent = role === 'user' ? 'You' : 'Assistant';
 
-- Interactive readline shell
-- Command history tracking
-- Colorized terminal output
-- Built-in local commands:
-  - help
-  - status
-  - echo
-  - ls
-  - pwd
-  - date
-  - history
-  - clear
-  - cat
-  - ask
-  - agent
-  - tool
-  - exit
-- AI-powered `ask` and `agent` commands
-- Tool execution for filesystem and system tasks
-- Lightweight architecture ready for extension
+  const textNode = document.createElement('p');
+  textNode.textContent = text;
 
-## Quick start
+  wrapper.appendChild(label);
+  wrapper.appendChild(textNode);
+  chatPanel.appendChild(wrapper);
+  chatPanel.scrollTop = chatPanel.scrollHeight;
+}
 
-```bash
-npm install
-cp .env.example .env
-npm start
-```
+async function sendMessage(event) {
+  event.preventDefault();
 
-Try commands like:
+  const text = messageInput.value.trim();
+  if (!text) return;
 
-```bash
-help
-status
-echo hello from AI Terminal
-ls
-pwd
-date
-ask Explain what this project does.
-agent Summarize the repo and suggest next improvements.
-history
-clear
-exit
-```
+  addMessage('user', text);
+  messageInput.value = '';
 
-## Environment
+  const placeholder = document.createElement('div');
+  placeholder.className = 'message bot';
+  placeholder.innerHTML = '<strong>Assistant</strong><p>Thinking...</p>';
+  chatPanel.appendChild(placeholder);
 
-Create a `.env` file based on `.env.example`:
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
 
-```bash
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4o-mini
-```
+    const data = await response.json();
 
-If no API key is configured, the terminal still works for local commands.
+    placeholder.remove();
 
-## Deployment
+    if (!response.ok) {
+      addMessage('bot', data.error || 'Something went wrong.');
+      return;
+    }
 
-### Local run
+    addMessage('bot', data.reply || 'No response returned.');
+  } catch (error) {
+    placeholder.remove();
+    addMessage('bot', 'Unable to reach the AI service right now.');
+  }
+}
 
-```bash
-npm install
-cp .env.example .env
-npm start
-```
+clearBtn.addEventListener('click', () => {
+  chatPanel.innerHTML = `
+    <div class="message bot">
+      <strong>Assistant</strong>
+      <p>Conversation cleared. Ask me anything.</p>
+    </div>
+  `;
+});
 
-### Docker
-
-```bash
-docker build -t ai-terminal .
-docker run -it --rm --env-file .env ai-terminal
-```
-
-### Docker Compose
-
-```bash
-docker compose up --build
-```
-
-## Architecture
-
-The project is split into four main parts:
-
-- shell I/O and prompt handling
-- command routing
-- tool layer
-- AI adapter
-
-Key files:
-
-- `src/index.js`
-- `src/terminal.js`
-- `src/commands.js`
-- `src/agent.js`
-- `src/tools.js`
-- `src/ai.js`
-
-## Example agent usage
-
-```bash
-agent List the repository files and explain the main modules.
-agent Read README.md and summarize the current project.
-agent Use the available tools to inspect the current working directory.
-```
-
-## Notes
-
-This repo is a solid base for an AI terminal agent, and it is designed to be extended with more tools, more commands, and richer agent behavior.
+chatForm.addEventListener('submit', sendMessage);
