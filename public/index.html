@@ -19,11 +19,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 function getSession(sessionId) {
   if (!sessionId) return null;
-
   if (!sessions.has(sessionId)) {
     sessions.set(sessionId, { messages: [] });
   }
-
   return sessions.get(sessionId);
 }
 
@@ -31,37 +29,71 @@ function appendMessage(sessionId, role, content) {
   const session = getSession(sessionId);
   if (!session) return;
 
-  session.messages.push({ role, content: String(content).trim() });
+  const message = { role, content: String(content).trim() };
+  session.messages.push(message);
+
   if (session.messages.length > MAX_HISTORY * 2) {
     session.messages = session.messages.slice(-MAX_HISTORY * 2);
   }
 }
 
-function isInsideProject(targetPath) {
-  const resolved = path.resolve(targetPath);
+function resolveProjectPath(targetPath = '.') {
+  const safeTarget = path.resolve(__dirname, targetPath);
   const root = path.resolve(__dirname);
-  return resolved === root || resolved.startsWith(root + path.sep);
-}
 
-function listDirectory(target = '.') {
-  const safeTarget = path.resolve(__dirname, target);
-  if (!isInsideProject(safeTarget)) {
+  if (safeTarget !== root && !safeTarget.startsWith(root + path.sep)) {
     throw new Error('Refusing to access a path outside the project root.');
   }
 
+  return safeTarget;
+}
+
+function listDirectory(target = '.') {
+  const safeTarget = resolveProjectPath(target);
   const entries = fs.readdirSync(safeTarget, { withFileTypes: true });
+
   return entries
     .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
     .sort((a, b) => a.localeCompare(b));
 }
 
 function readFile(targetPath) {
-  const safeTarget = path.resolve(__dirname, targetPath);
-  if (!isInsideProject(safeTarget)) {
-    throw new Error('Refusing to read a path outside the project root.');
+  const safeTarget = resolveProjectPath(targetPath);
+  return fs.readFileSync(safeTarget, 'utf8');
+}
+
+function writeFile(targetPath, content) {
+  const safeTarget = resolveProjectPath(targetPath);
+  const dir = path.dirname(safeTarget);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(safeTarget, String(content), 'utf8');
+  return `Wrote ${targetPath}`;
+}
+
+function searchFiles(query) {
+  const root = path.resolve(__dirname);
+  const results = [];
+
+  function walk(current) {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const fullPath = path.join(current, entry.name);
+      const relative = path.relative(root, fullPath).split(path.sep).join('/');
+
+      if (entry.isDirectory()) {
+        if (['.git', 'node_modules'].includes(entry.name)) continue;
+        walk(fullPath);
+        continue;
+      }
+
+      const fileText = fs.readFileSync(fullPath, 'utf8');
+      if (fileText.toLowerCase().includes(String(query).toLowerCase())) {
+        results.push(relative);
+      }
+    }
   }
 
-  return fs.readFileSync(safeTarget, 'utf8');
+  walk(root);
+  return results.slice(0, 50);
 }
 
 function getSystemInfo() {
@@ -85,15 +117,20 @@ function runSafeShell(command) {
     /^git\s+status(?:\s+.*)?$/i,
     /^git\s+branch(?:\s+.*)?$/i,
     /^cat\s+.+$/i,
+    /^head\s+.+$/i,
+    /^tail\s+.+$/i,
   ];
 
-  const isAllowed = allowed.some((pattern) => pattern.test(command.trim()));
+  const trimmed = String(command || '').trim();
+  if (!trimmed) return 'No command provided.';
+
+  const isAllowed = allowed.some((pattern) => pattern.test(trimmed));
   if (!isAllowed) {
     throw new Error('Shell access is restricted to safe read-only commands.');
   }
 
   try {
-    return execSync(command, {
+    return execSync(trimmed, {
       cwd: __dirname,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -110,7 +147,8 @@ function executeBuiltInTool(message) {
   if (
     lower.includes('system info') ||
     lower.includes('what environment') ||
-    lower.includes('tell me about this machine')
+    lower.includes('tell me about this machine') ||
+    lower.includes('environment info')
   ) {
     return `System info:\n${JSON.stringify(getSystemInfo(), null, 2)}`;
   }
@@ -120,29 +158,76 @@ function executeBuiltInTool(message) {
     lower.includes('list directory') ||
     lower.includes('directory contents') ||
     lower.includes('show files') ||
+    lower.includes('project files') ||
+    lower.includes('what files are here') ||
     lower.includes('ls')
   ) {
     const files = listDirectory('.');
     return `Project files:\n${files.join('\n')}`;
   }
 
-  const readMatch = message.match(/(?:read|open|view)\s+(?:file\s+)?["']?([^\n"'\s]+)["']?/i);
+  if (
+    lower.includes('pwd') ||
+    lower.includes('working directory') ||
+    lower.includes('where am i')
+  ) {
+    return `Working directory:\n${__dirname}`;
+  }
+
+  if (lower.includes('git status') || lower.includes('status')) {
+    return `Shell output:\n${runSafeShell('git status --short')}`;
+  }
+
+  if (lower.includes('git branch') || lower.includes('branches')) {
+    return `Shell output:\n${runSafeShell('git branch')}`;
+  }
+
+  const searchMatch = message.match(/search\s+(?:for\s+)?(.+)/i);
+  if (searchMatch) {
+    const query = searchMatch[1].trim();
+    const matches = searchFiles(query);
+    return matches.length
+      ? `Search results for "${query}":\n${matches.join('\n')}`
+      : `No matches found for "${query}".`;
+  }
+
+  const readMatch = message.match(/(?:read|open|view|show|cat)\s+(?:file\s+)?["']?([^\n"'\s]+)["']?/i);
   if (readMatch) {
     const target = readMatch[1];
-    const content = readFile(target);
-    return `File: ${target}\n\n${content.slice(0, 4000)}`;
+    try {
+      const content = readFile(target);
+      return `File: ${target}\n\n${content.slice(0, 4000)}`;
+    } catch (error) {
+      return `Could not read "${target}": ${error.message}`;
+    }
+  }
+
+  const writeMatch = message.match(/(?:write|save|create)\s+["']?([^\n"'\s]+)["']?\s+(?:with|as|to)\s+(.+)/is);
+  if (writeMatch) {
+    const [_, targetPath, content] = writeMatch;
+    try {
+      return writeFile(targetPath, content);
+    } catch (error) {
+      return `Could not write "${targetPath}": ${error.message}`;
+    }
   }
 
   const shellMatch = message.match(/(?:run|execute|shell)\s+(.+)/i);
   if (shellMatch) {
-    return `Shell output:\n${runSafeShell(shellMatch[1])}`;
+    try {
+      return `Shell output:\n${runSafeShell(shellMatch[1])}`;
+    } catch (error) {
+      return `Shell error: ${error.message}`;
+    }
   }
 
-  if (lower.includes('pwd') || lower.includes('working directory')) {
-    return `Working directory:\n${__dirname}`;
-  }
-
-  if (lower.includes('repo') || lower.includes('project') || lower.includes('what is in this app')) {
+  if (
+    lower.includes('repo') ||
+    lower.includes('project overview') ||
+    lower.includes('what is in this app') ||
+    lower.includes('project structure') ||
+    lower.includes('what is in this project')
+  ) {
     const files = listDirectory('.');
     return `Project overview:\n${files.join('\n')}`;
   }
@@ -169,14 +254,11 @@ app.post('/api/chat', async (req, res) => {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
-  if (!apiKey) {
+  if (!apiKey && mode !== 'agent') {
     return res.status(400).json({
       error: 'OPENAI_API_KEY is not configured. Add it to your .env file before using the AI chat.',
     });
   }
-
-  const systemPrompt =
-    'You are a helpful AI terminal assistant and coding partner. Keep answers concise, practical, and technically accurate. If the user asks for project structure, files, or repo info, prefer concrete facts and brief summaries. Use markdown sparingly and avoid oversized responses.';
 
   try {
     let reply = null;
@@ -187,8 +269,13 @@ app.post('/api/chat', async (req, res) => {
     }
 
     if (toolResult) {
-      reply = `${toolResult}`;
+      reply = toolResult;
+    } else if (mode === 'agent') {
+      reply = 'I could not find a built-in tool for that request. Try: list files, read README.md, system info, search for X, or run git status.';
     } else {
+      const systemPrompt =
+        'You are a helpful AI terminal assistant and coding partner. Keep answers concise, practical, and technically accurate. If the user asks for project structure, files, or repo info, prefer concrete answers with file names and exact behaviors.';
+
       const openaiMessages = [
         { role: 'system', content: systemPrompt },
         ...session.messages.slice(-MAX_HISTORY),

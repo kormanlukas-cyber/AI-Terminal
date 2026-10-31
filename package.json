@@ -1,3 +1,14 @@
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-PORT=3000
+{
+  "name": "ai-terminal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
