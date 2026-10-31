@@ -42,13 +42,14 @@ Create a `.env` file:
 ```bash
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o-mini
+PORT=3000
 ```
 
 ## Docker
 
 ```bash
 docker build -t ai-terminal .
-docker run -it --rm --env-file .env ai-terminal
+docker run -it --rm --env-file .env -p 3000:3000 ai-terminal
 ```
 
 Or:
@@ -56,6 +57,26 @@ Or:
 ```bash
 docker compose up --build
 ```
+
+## Public deployment
+
+This app can be hosted publicly on Render, Railway, Fly.io, or any Node.js-compatible cloud service.
+
+### Render
+
+- Connect the GitHub repo
+- Set the build command to `npm install`
+- Set the start command to `npm start`
+- Add environment variables:
+  - `OPENAI_API_KEY`
+  - `OPENAI_MODEL=gpt-4o-mini`
+  - `PORT=3000`
+
+### Railway
+
+- Deploy the repo from GitHub
+- Set the same environment variables
+- Start command: `npm start`
 
 ## Notes
 
