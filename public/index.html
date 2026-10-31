@@ -17,6 +17,261 @@ const sessions = new Map();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+function normalizeSession(sessionId) {
+  const existing = sessions.get(sessionId) || {
+    messages: [],
+    toolLog: [],
+    memory: {
+      projectOverview: null,
+      filesTouched: [],
+      lastValidation: null,
+      recentPlans: [],
+    },
+  };
+
+  if (!sessions.has(sessionId)) {
+    sessions.set(sessionId, existing);
+  }
+
+  return sessions.get(sessionId);
+}
+
+function recordToolLog(sessionId, step, status, detail) {
+  const session = normalizeSession(sessionId);
+  session.toolLog.push({
+    step,
+    status,
+    detail: String(detail ?? '').trim(),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function getSession(sessionId) {
+  if (!sessionId) return null;
+  return normalizeSession(sessionId);
+}
+
+function appendMessage(sessionId, role, content) {
+  const session = getSession(sessionId);
+  if (!session) return;
+
+  const trimmed = String(content ?? '').trim();
+  if (!trimmed) return;
+
+  session.messages.push({ role, content: trimmed });
+  if (session.messages.length > MAX_HISTORY * 2) {
+    session.messages = session.messages.slice(-MAX_HISTORY * 2);
+  }
+}
+
+function resolveProjectPath(targetPath = '.') {
+  const safeTarget = path.resolve(__dirname, targetPath || '.');
+  const root = path.resolve(__dirname);
+
+  if (safeTarget !== root && !safeTarget.startsWith(root + path.sep)) {
+    throw new Error('Refusing to access a path outside the project root.');
+  }
+
+  return safeTarget;
+}
+
+function listDirectory(target = '.') {
+  const safeTarget = resolveProjectPath(target);
+  const entries = fs.readdirSync(safeTarget, { withFileTypes: true });
+  return entries
+    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function readFile(targetPath) {
+  const safeTarget = resolveProjectPath(targetPath);
+  return fs.readFileSync(safeTarget, 'utf8');
+}
+
+function writeFile(targetPath, content) {
+  const safeTarget = resolveProjectPath(targetPath);
+  const dir = path.dirname(safeTarget);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(safeTarget, String(content), 'utf8');
+  return `Wrote ${targetPath}`;
+}
+
+function searchFiles(query) {
+  if (!query || !String(query).trim()) return [];
+
+  const root = path.resolve(__dirname);
+  const matches = [];
+
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (entry.name === '.git' || entry.name === 'node_modules') continue;
+
+      const fullPath = path.join(currentDir, entry.name);
+      const relativePath = path.relative(root, fullPath).split(path.sep).join('/');
+
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+
+      try {
+        const text = fs.readFileSync(fullPath, 'utf8');
+        if (text.toLowerCase().includes(String(query).toLowerCase())) {
+          matches.push(relativePath);
+        }
+      } catch {
+        // Ignore binary or unreadable files.
+      }
+    }
+  }
+
+  walk(root);
+  return matches.slice(0, 50);
+}
+
+function safeShell(command) {
+  const trimmed = String(command || '').trim();
+  if (!trimmed) return 'No command provided.';
+
+  const allowed = [
+    /^pwd$/i,
+    /^ls(?:\s+.*)?$/i,
+    /^echo\s+.+$/i,
+    /^node\s+-v$/i,
+    /^npm\s+-v$/i,
+    /^git\s+status(?:\s+.*)?$/i,
+    /^git\s+branch(?:\s+.*)?$/i,
+    /^cat\s+.+$/i,
+    /^head\s+.+$/i,
+    /^tail\s+.+$/i,
+    /^node\s+--check\s+.+$/i,
+  ];
+
+  const isAllowed = allowed.some((pattern) => pattern.test(trimmed));
+  if (!isAllowed) {
+    throw new Error('Shell access is restricted to safe read-only commands.');
+  }
+
+  try {
+    return execSync(trimmed, {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (error) {
+    return error.stdout?.toString() || error.stderr?.toString() || error.message;
+  }
+}
+
+function getSystemInfo() {
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    node: process.version,
+    cwd: process.cwd(),
+    home: os.homedir(),
+    temp: os.tmpdir(),
+  };
+}
+
+function getProjectOverview() {
+  const files = listDirectory('.');
+  return {
+    root: __dirname,
+    files,
+    count: files.length,
+  };
+}
+
+function runProjectValidation(sessionId) {
+  const validations = [];
+  const projectFile = path.join(__dirname, 'package.json');
+
+  if (fs.existsSync(projectFile)) {
+    const pkg = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+
+    if (pkg.scripts?.test) {
+      validations.push('npm test');
+    }
+
+    if (pkg.scripts?.build) {
+      validations.push('npm run build');
+    }
+
+    for (const file of listDirectory('.')) {
+      if (file.endsWith('.js') || file.endsWith('.mjs')) {
+        validations.push(`node --check ${file}`);
+      }
+    }
+  }
+
+  const output = [];
+  for (const command of validations.slice(0, 4)) {
+    try {
+      const result = safeShell(command);
+      output.push(`Command: ${command}\n${result.slice(0, 2000)}`);
+    } catch (error) {
+      output.push(`Command failed: ${command}\n${error.message}`);
+    }
+  }
+
+  const summary = output.length
+    ? output.join('\n\n---\n\n')
+    : 'Validation skipped: no runnable project checks are defined.';
+
+  recordToolLog(sessionId, 'validation', 'ok', summary);
+  return summary;
+}
+
+function executeToolCall(sessionId, toolCall) {
+  const { name, arguments: args = {} } = toolCall;
+
+  switch (name) {
+    case 'list_directory': {
+      const target = args.path || '.';
+      const result = `Directory listing for ${target}:\n${listDirectory(target).join('\n')}`;
+      recordToolLog(sessionId, 'list_directory', 'ok', result);
+      return result;
+    }
+    case 'read_file': {
+      const target = args.path || '.';
+      const content = readFile(target);
+      const result = `File: ${target}\n\n${content.slice(0, 8000)}`;
+      recordToolLog(sessionId, 'read_file', 'ok', result);
+      return result;
+    }
+    case 'search_files': {
+      const query = args.query || '';
+      const matches = searchFiles(query);
+      const result = matches.length
+        ? `Search results for "${query}":\n${matches.join('\n')}`
+        : `No matches found for "${query}".`;
+      recordToolLog(sessionId, 'search_files', 'ok', result);
+      return result;
+    }
+    case 'get_system_info': {
+      const result = `System info:\n${JSON.stringify(getSystemInfo(), null, 2)}`;
+      recordToolLog(sessionId, 'get_system_info', 'ok', result);
+      return result;
+    }
+    case 'run_shell': {
+      const result = `Shell output:\n${safeShell(args.command || '')}`;
+      recordToolLog(sessionId, 'run_shell', 'ok', result);
+      return result;
+    }
+    case 'write_file': {
+      const target = args.path || '';
+      const content = args.content || '';
+      const result = writeFile(target, content);
+      recordToolLog(sessionId, 'write_file', 'ok', result);
+      return result;
+    }
+    default:
+      return `Unsupported tool: ${name}`;
+  }
+}
+
 const AGENT_TOOLS = [
   {
     type: 'function',
@@ -99,181 +354,18 @@ const AGENT_TOOLS = [
   },
 ];
 
-function getSession(sessionId) {
-  if (!sessionId) return null;
-  if (!sessions.has(sessionId)) {
-    sessions.set(sessionId, { messages: [] });
-  }
-  return sessions.get(sessionId);
-}
-
-function appendMessage(sessionId, role, content) {
-  const session = getSession(sessionId);
-  if (!session) return;
-
-  const trimmed = String(content ?? '').trim();
-  if (!trimmed) return;
-
-  session.messages.push({ role, content: trimmed });
-  if (session.messages.length > MAX_HISTORY * 2) {
-    session.messages = session.messages.slice(-MAX_HISTORY * 2);
-  }
-}
-
-function resolveProjectPath(targetPath = '.') {
-  const safeTarget = path.resolve(__dirname, targetPath || '.');
-  const root = path.resolve(__dirname);
-
-  if (safeTarget !== root && !safeTarget.startsWith(root + path.sep)) {
-    throw new Error('Refusing to access a path outside the project root.');
-  }
-
-  return safeTarget;
-}
-
-function listDirectory(target = '.') {
-  const safeTarget = resolveProjectPath(target);
-  const entries = fs.readdirSync(safeTarget, { withFileTypes: true });
-  return entries
-    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
-    .sort((a, b) => a.localeCompare(b));
-}
-
-function readFile(targetPath) {
-  const safeTarget = resolveProjectPath(targetPath);
-  return fs.readFileSync(safeTarget, 'utf8');
-}
-
-function writeFile(targetPath, content) {
-  const safeTarget = resolveProjectPath(targetPath);
-  const dir = path.dirname(safeTarget);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(safeTarget, String(content), 'utf8');
-  return `Wrote ${targetPath}`;
-}
-
-function searchFiles(query) {
-  if (!query || !String(query).trim()) return [];
-
-  const root = path.resolve(__dirname);
-  const matches = [];
-
-  function walk(currentDir) {
-    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
-      if (entry.name === '.git' || entry.name === 'node_modules') continue;
-
-      const fullPath = path.join(currentDir, entry.name);
-      const relativePath = path.relative(root, fullPath).split(path.sep).join('/');
-
-      if (entry.isDirectory()) {
-        walk(fullPath);
-        continue;
-      }
-
-      try {
-        const text = fs.readFileSync(fullPath, 'utf8');
-        if (text.toLowerCase().includes(String(query).toLowerCase())) {
-          matches.push(relativePath);
-        }
-      } catch {
-        // Ignore unreadable binary files silently.
-      }
-    }
-  }
-
-  walk(root);
-  return matches.slice(0, 50);
-}
-
-function getSystemInfo() {
-  return {
-    platform: process.platform,
-    arch: process.arch,
-    node: process.version,
-    cwd: process.cwd(),
-    home: os.homedir(),
-    temp: os.tmpdir(),
-  };
-}
-
-function runSafeShell(command) {
-  const trimmed = String(command || '').trim();
-  if (!trimmed) return 'No command provided.';
-
-  const allowed = [
-    /^pwd$/i,
-    /^ls(?:\s+.*)?$/i,
-    /^echo\s+.+$/i,
-    /^node\s+-v$/i,
-    /^npm\s+-v$/i,
-    /^git\s+status(?:\s+.*)?$/i,
-    /^git\s+branch(?:\s+.*)?$/i,
-    /^cat\s+.+$/i,
-    /^head\s+.+$/i,
-    /^tail\s+.+$/i,
-  ];
-
-  const isAllowed = allowed.some((pattern) => pattern.test(trimmed));
-  if (!isAllowed) {
-    throw new Error('Shell access is restricted to safe read-only commands.');
-  }
-
-  try {
-    return execSync(trimmed, {
-      cwd: __dirname,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      maxBuffer: 1024 * 1024,
-    });
-  } catch (error) {
-    return error.stdout?.toString() || error.stderr?.toString() || error.message;
-  }
-}
-
-function executeToolCall(toolCall) {
-  const { name, arguments: args = {} } = toolCall;
-
-  switch (name) {
-    case 'list_directory': {
-      const target = args.path || '.';
-      return `Directory listing for ${target}:\n${listDirectory(target).join('\n')}`;
-    }
-    case 'read_file': {
-      const content = readFile(args.path || '.');
-      return `File: ${args.path || '.'}\n\n${content.slice(0, 8000)}`;
-    }
-    case 'search_files': {
-      const matches = searchFiles(args.query || '');
-      return matches.length
-        ? `Search results for "${args.query}":\n${matches.join('\n')}`
-        : `No matches found for "${args.query}".`;
-    }
-    case 'get_system_info': {
-      return `System info:\n${JSON.stringify(getSystemInfo(), null, 2)}`;
-    }
-    case 'run_shell': {
-      return `Shell output:\n${runSafeShell(args.command || '')}`;
-    }
-    case 'write_file': {
-      return writeFile(args.path || '', args.content || '');
-    }
-    default:
-      return `Unsupported tool: ${name}`;
-  }
-}
-
-async function runAgent(message, sessionMessages) {
-  const systemPrompt = `You are the best AI coding agent in the room.
+async function runAgent(message, sessionId, sessionMessages) {
+  const systemPrompt = `You are a senior software engineer working in this repository.
 
 Rules:
-- Be concise, accurate, and helpful.
-- Prefer using tools to inspect the project before answering.
-- Keep answers grounded in the actual repository content.
-- For file tasks, mention exact file paths and concise observations.
-- Never use destructive commands.
-- Use safe read-only shell commands when needed.
-- If you need to write, do it only with the write_file tool.
-- If the user asks for project overview, inspect the files first.`;
+- inspect the repo before answering when needed
+- use tools for facts, never guess
+- prefer specific file references and concise explanations
+- avoid destructive commands
+- use read-only shell commands when needed
+- if a change is required, patch only the relevant files
+- after planned edits, run a validation step
+- summarize the result clearly`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -302,8 +394,7 @@ Rules:
   }
 
   const data = await response.json();
-  const choice = data?.choices?.[0];
-  const assistantMessage = choice?.message;
+  const assistantMessage = data?.choices?.[0]?.message;
 
   if (!assistantMessage) {
     return 'No response returned by the model.';
@@ -314,7 +405,7 @@ Rules:
       role: 'tool',
       tool_call_id: toolCall.id,
       name: toolCall.function.name,
-      content: executeToolCall(toolCall.function),
+      content: executeToolCall(sessionId, toolCall.function),
     }));
 
     const followUpMessages = [
@@ -348,47 +439,65 @@ Rules:
   return assistantMessage.content?.trim() || 'No response returned.';
 }
 
-function fallbackAgent(message) {
+function fallbackAgent(message, sessionId) {
   const lower = message.toLowerCase();
 
   if (lower.includes('system info') || lower.includes('what environment') || lower.includes('tell me about this machine')) {
-    return `System info:\n${JSON.stringify(getSystemInfo(), null, 2)}`;
+    const result = `System info:\n${JSON.stringify(getSystemInfo(), null, 2)}`;
+    recordToolLog(sessionId, 'fallback_system_info', 'ok', result);
+    return result;
   }
 
   if (lower.includes('list files') || lower.includes('list directory') || lower.includes('show files') || lower.includes('project files')) {
-    return `Project files:\n${listDirectory('.').join('\n')}`;
+    const result = `Project files:\n${listDirectory('.').join('\n')}`;
+    recordToolLog(sessionId, 'fallback_list', 'ok', result);
+    return result;
   }
 
   if (lower.includes('pwd') || lower.includes('working directory') || lower.includes('where am i')) {
-    return `Working directory:\n${__dirname}`;
+    const result = `Working directory:\n${__dirname}`;
+    recordToolLog(sessionId, 'fallback_pwd', 'ok', result);
+    return result;
   }
 
   if (lower.includes('git status') || lower.includes('status')) {
-    return `Shell output:\n${runSafeShell('git status --short')}`;
+    const result = `Shell output:\n${safeShell('git status --short')}`;
+    recordToolLog(sessionId, 'fallback_git_status', 'ok', result);
+    return result;
   }
 
   const searchMatch = message.match(/search\s+(?:for\s+)?(.+)/i);
   if (searchMatch) {
     const query = searchMatch[1].trim();
     const matches = searchFiles(query);
-    return matches.length ? `Search results for "${query}":\n${matches.join('\n')}` : `No matches found for "${query}".`;
+    const result = matches.length ? `Search results for "${query}":\n${matches.join('\n')}` : `No matches found for "${query}".`;
+    recordToolLog(sessionId, 'fallback_search', 'ok', result);
+    return result;
   }
 
   const readMatch = message.match(/(?:read|open|view|show|cat)\s+(?:file\s+)?["']?([^\n"'\s]+)["']?/i);
   if (readMatch) {
     const target = readMatch[1];
     try {
-      return `File: ${target}\n\n${readFile(target).slice(0, 4000)}`;
+      const result = `File: ${target}\n\n${readFile(target).slice(0, 4000)}`;
+      recordToolLog(sessionId, 'fallback_read', 'ok', result);
+      return result;
     } catch (error) {
-      return `Could not read "${target}": ${error.message}`;
+      const result = `Could not read "${target}": ${error.message}`;
+      recordToolLog(sessionId, 'fallback_read', 'error', result);
+      return result;
     }
   }
 
   if (lower.includes('repo') || lower.includes('project overview') || lower.includes('what is in this app')) {
-    return `Project overview:\n${listDirectory('.').join('\n')}`;
+    const result = `Project overview:\n${listDirectory('.').join('\n')}`;
+    recordToolLog(sessionId, 'fallback_project', 'ok', result);
+    return result;
   }
 
-  return 'I can help with project structure, debugging, file reads, searches, and read-only shell commands. Try: “list files”, “read README.md”, “search for auth”, or “system info”.';
+  const generic = 'I can help with project structure, debugging, file reads, searches, and read-only shell commands. Try: “list files”, “read README.md”, “search for auth”, or “system info”.';
+  recordToolLog(sessionId, 'fallback_generic', 'ok', generic);
+  return generic;
 }
 
 app.get('/health', (_req, res) => {
@@ -411,12 +520,29 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     let reply;
+    session.toolLog = session.toolLog || [];
+    session.memory = session.memory || { projectOverview: null, filesTouched: [], lastValidation: null, recentPlans: [] };
 
     if (mode === 'agent') {
+      recordToolLog(activeSessionId, 'plan', 'pending', `Planning how to answer: ${userMessage}`);
+
       if (!apiKey) {
-        reply = fallbackAgent(userMessage);
+        reply = fallbackAgent(userMessage, activeSessionId);
       } else {
-        reply = await runAgent(userMessage, session.messages.slice(-MAX_HISTORY));
+        const overview = getProjectOverview();
+        session.memory.projectOverview = overview;
+        const introspection = `Project root: ${overview.root}\nFiles: ${overview.files.join(', ')}`;
+        recordToolLog(activeSessionId, 'inspect', 'ok', introspection);
+
+        const structuredReply = await runAgent(userMessage, activeSessionId, session.messages.slice(-MAX_HISTORY));
+        reply = structuredReply;
+      }
+
+      if (userMessage.toLowerCase().includes('fix') || userMessage.toLowerCase().includes('edit') || userMessage.toLowerCase().includes('patch') || userMessage.toLowerCase().includes('add')) {
+        recordToolLog(activeSessionId, 'validate', 'pending', 'Running lightweight validation for the requested change.');
+        const validationResult = runProjectValidation(activeSessionId);
+        session.memory.lastValidation = validationResult;
+        reply += `\n\nValidation:\n${validationResult}`;
       }
     } else {
       if (!apiKey) {
@@ -425,8 +551,7 @@ app.post('/api/chat', async (req, res) => {
         });
       }
 
-      const systemPrompt =
-        'You are the best AI coding assistant. Keep answers concise, technically accurate, and grounded in the project context when available.';
+      const systemPrompt = 'You are the best AI coding assistant. Keep answers concise, technically accurate, and grounded in the project context when available.';
 
       const openaiMessages = [
         { role: 'system', content: systemPrompt },
@@ -456,13 +581,15 @@ app.post('/api/chat', async (req, res) => {
     }
 
     appendMessage(activeSessionId, 'assistant', reply);
+    const sessionState = getSession(activeSessionId);
 
     res.json({
       reply,
       sessionId: activeSessionId,
       mode,
       toolUsed: mode === 'agent',
-      toolResult: mode === 'agent' ? reply : null,
+      toolLog: sessionState.toolLog.slice(-10),
+      memory: sessionState.memory,
     });
   } catch (error) {
     res.status(500).json({

@@ -11,6 +11,9 @@
   --muted: #aab7ce;
   --primary: #7c9cff;
   --primary-dark: #496adf;
+  --success: #37d39a;
+  --warning: #f5b942;
+  --danger: #ff6b7a;
 }
 
 body {
@@ -22,7 +25,7 @@ body {
 }
 
 .app-shell {
-  width: min(960px, calc(100% - 32px));
+  width: min(980px, calc(100% - 32px));
   margin: 40px auto;
   background: rgba(9, 14, 27, 0.9);
   border: 1px solid var(--line);
@@ -91,11 +94,62 @@ h1 {
 }
 
 .chat-panel {
-  min-height: 420px;
-  max-height: 60vh;
+  min-height: 320px;
+  max-height: 52vh;
   overflow-y: auto;
   padding: 18px 20px;
   background: rgba(18, 26, 47, 0.4);
+}
+
+.tool-log-panel {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(12, 18, 31, 0.8);
+  padding: 12px 20px;
+}
+
+.tool-log-header {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tool-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-log-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.tool-log-item.success {
+  border-color: rgba(55, 211, 154, 0.4);
+  color: var(--success);
+}
+
+.tool-log-item.warning {
+  border-color: rgba(245, 185, 66, 0.4);
+  color: var(--warning);
+}
+
+.tool-log-item.error {
+  border-color: rgba(255, 107, 122, 0.4);
+  color: var(--danger);
 }
 
 .message {
@@ -131,7 +185,6 @@ h1 {
   display: flex;
   gap: 12px;
   padding: 18px 20px 20px;
-  border-top: 1px solid var(--line);
   background: rgba(18, 26, 47, 0.9);
 }
 

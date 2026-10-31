@@ -29,9 +29,16 @@
       <main class="chat-panel" id="chatPanel">
         <div class="message bot">
           <strong>Assistant</strong>
-          <p>Hi! I can answer questions or act as a lightweight project agent. Try: “list files”, “read README.md”, “system info”, or “search for auth”.</p>
+          <p>Hi! I can answer questions or act as a lightweight project agent. Try: “list files”, “read README.md”, “system info”, “fix a bug”, or “search for auth”.</p>
         </div>
       </main>
+
+      <aside class="tool-log-panel" id="toolLogPanel" aria-live="polite">
+        <div class="tool-log-header">
+          <strong>Agent activity</strong>
+        </div>
+        <ul id="toolLogList" class="tool-log-list"></ul>
+      </aside>
 
       <form id="chatForm" class="composer">
         <input
