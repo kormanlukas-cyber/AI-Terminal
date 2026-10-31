@@ -1,16 +1,17 @@
 # AI Terminal
 
-A terminal-first application for building AI-powered command-line experiences.
+A terminal-first AI agent that blends a local CLI shell with an OpenAI-compatible LLM and built-in tools.
 
 ## Features
 
 - Interactive readline shell
-- Command registry with built-in commands
 - Command history tracking
-- Async AI question support via OpenAI-compatible API
-- Colorized terminal output
-- File-system commands such as `ls`, `pwd`, and `date`
-- Lightweight architecture suitable for extension
+- Colorized output
+- Built-in local commands such as `help`, `status`, `ls`, `pwd`, `date`, `history`, and `cat`
+- AI-powered `ask` command
+- Agent mode for higher-level prompts
+- Tool execution layer for filesystem and shell operations
+- Extensible architecture for future plugins or tools
 
 ## Quick start
 
@@ -30,47 +31,38 @@ ls
 pwd
 date
 ask Explain what this project does.
+agent Summarize the project and suggest next improvements.
 history
 clear
 exit
 ```
 
-## Environment variables
+## Environment
 
-Create a `.env` file based on `.env.example` and set your keys if you want to use the AI integration:
+Required for AI requests:
 
 ```bash
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o-mini
 ```
 
+If the API key is missing, the app will still run the local terminal commands and return a helpful message when AI features are used.
+
 ## Architecture
 
-The project is intentionally modular:
+The app is organized into a shell, a command registry, a tool layer, and an AI adapter.
 
 - `src/index.js` starts the terminal
-- `src/terminal.js` owns prompt and input handling
-- `src/commands.js` contains built-in commands
-- `src/ai.js` wraps the AI provider call
+- `src/terminal.js` manages prompt lifecycle and IO
+- `src/commands.js` defines shell commands
+- `src/ai.js` contains the OpenAI-compatible API client
+- `src/tools.js` exposes local tools such as file and system inspection
+- `src/agent.js` coordinates task execution and prompt routing
 
-## Project structure
+## Example agent usage
 
-```text
-.
-├── .env.example
-├── .gitignore
-├── ARCHITECTURE.md
-├── LICENSE
-├── README.md
-├── package.json
-├── src/
-│   ├── ai.js
-│   ├── commands.js
-│   ├── index.js
-│   └── terminal.js
-└── node_modules/
+```bash
+agent List the repo files and explain the key modules.
+agent Read README.md and summarize the project quickly.
+agent Use the available tools to inspect the current working directory.
 ```
-
-## Notes
-
-This repo is designed as a clean starting point for an AI-powered terminal agent. You can expand it with commands for file creation, code execution, search, prompts, or tool integrations.

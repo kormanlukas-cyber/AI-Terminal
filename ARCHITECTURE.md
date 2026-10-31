@@ -1,27 +1,31 @@
 # Architecture Overview
 
-This project is a terminal-based AI shell designed to be easy to extend. It combines a command router, a user-facing interactive prompt, and a pluggable AI adapter so the app can answer natural-language questions or execute built-in CLI operations.
+This project is an interactive AI terminal that combines a local command shell with a lightweight agent layer. It is designed to respond to user prompts, run local filesystem commands, and optionally forward requests to an OpenAI-compatible API.
 
 ```mermaid
 flowchart TD
-    User["User"] --> Shell["Interactive Terminal"]
+    User["User"] --> Shell["Terminal Shell"]
     Shell --> Router["Command Router"]
-    Router --> Builtins["Built-in Commands"]
-    Builtins --> FS["Filesystem Utilities"]
-    Builtins --> System["System Info Commands"]
-    Router --> AI["AI Adapter"]
-    AI --> Provider["OpenAI-compatible API"]
+    Router --> Local["Built-in Commands"]
+    Router --> Agent["Agent Layer"]
+    Agent --> Tools["Local Tools"]
+    Tools --> FS["Filesystem"]
+    Tools --> OS["System Info / Shell"]
+    Agent --> AI["AI Adapter"]
+    AI --> LLM["OpenAI-compatible model"]
 
     subgraph App["Application Layer"]
         Shell
         Router
-        Builtins
+        Local
+        Agent
+        Tools
         AI
     end
 
-    subgraph Runtime["Runtime Environment"]
+    subgraph Runtime["Runtime"]
         Node["Node.js"]
-        Console["Terminal / Console"]
+        Console["Console / Terminal"]
     end
 
     Shell --> Node
@@ -34,25 +38,25 @@ flowchart TD
   - Bootstraps the terminal session.
 
 - `src/terminal.js`
-  - Manages prompt lifecycle and input processing.
-  - Tracks command history and emits colored output.
+  - Owns the interactive prompt, history, and color output.
 
 - `src/commands.js`
-  - Stores the built-in commands.
-  - Includes help, status, echo, ls, pwd, date, history, clear, ask, and exit.
+  - Houses the built-in CLI commands and agent command handlers.
 
 - `src/ai.js`
-  - Sends prompts to an OpenAI-compatible API using environment variables.
-  - Produces AI responses for the terminal shell.
+  - Talks to the OpenAI-compatible API.
 
-- `.env.example`
-  - Provides the configuration template for API credentials.
+- `src/tools.js`
+  - Exposes filesystem and environment tools used by the agent.
+
+- `src/agent.js`
+  - Coordinates task execution and decides whether to use local tools or AI.
 
 ## Runtime Flow
 
-1. The terminal starts and prints the prompt.
-2. The user enters a command.
-3. The command router resolves the command name.
-4. Built-in commands execute locally in Node.js.
-5. The `ask` command forwards the prompt to the AI provider.
-6. Output is printed to the console, and command history is updated.
+1. The user types a command at the terminal prompt.
+2. The shell resolves the command name via the registry.
+3. Built-in commands execute locally in Node.js.
+4. The `ask` command and `agent` command may call the AI provider.
+5. Tool-backed prompts can inspect the filesystem or query system information.
+6. Results are printed to the terminal and added to the command history.

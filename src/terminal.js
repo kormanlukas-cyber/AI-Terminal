@@ -1,6 +1,7 @@
 import readline from 'node:readline';
 import chalk from 'chalk';
 import { commands } from './commands.js';
+import { Agent, buildToolMap } from './agent.js';
 
 export function createTerminal() {
   const rl = readline.createInterface({
@@ -12,6 +13,9 @@ export function createTerminal() {
   const state = {
     history: [],
   };
+
+  const tools = buildToolMap();
+  const agent = new Agent(tools);
 
   const printBanner = () => {
     console.log(chalk.bold.cyan('AI Terminal'));
@@ -35,14 +39,14 @@ export function createTerminal() {
     const handler = commands[commandName];
 
     if (!handler) {
-      console.log(chalk.red(`Unknown command: ${commandName}`));
+      const fallback = await agent.run(trimmed);
+      console.log(chalk.green(fallback));
       printPrompt();
       return;
     }
 
     try {
-      const result = await handler(args, { state, rl, printPrompt });
-
+      const result = await handler(args, { state, tools, agent, rl, printPrompt });
       if (typeof result === 'string' && result.length > 0) {
         console.log(chalk.green(result));
       }
