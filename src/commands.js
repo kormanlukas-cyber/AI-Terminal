@@ -1,67 +1,87 @@
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import chalk from 'chalk';
+import { askAI, getSystemInfo, listDirectory, resolvePath, readFileText } from './ai.js';
 
-const DEFAULT_MODEL = 'gpt-4o-mini';
+export const commands = {
+  help: () => {
+    return [
+      'Available commands:',
+      '  help            Show commands',
+      '  status          Show terminal status',
+      '  echo <text>     Print a message',
+      '  pwd             Show current working directory',
+      '  ls [path]       List directory contents',
+      '  date            Show current date and time',
+      '  history         Show command history',
+      '  clear           Clear the terminal',
+      '  ask <prompt>    Ask an AI question',
+      '  cat <file>      Read a file',
+      '  exit            Quit the terminal',
+    ].join('\n');
+  },
 
-export async function askAI(prompt) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  status: () => {
+    const info = getSystemInfo();
+    return [
+      'AI Terminal status',
+      `Platform: ${info.platform}`,
+      `Arch: ${info.arch}`,
+      `Node: ${info.node}`,
+      `Working directory: ${info.cwd}`,
+    ].join('\n');
+  },
 
-  if (!apiKey) {
-    return 'OPENAI_API_KEY is not configured. Add it to your .env file.';
-  }
+  echo: (args) => args.join(' ') || 'No message provided.',
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-    }),
-  });
+  pwd: () => process.cwd(),
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`AI request failed: ${response.status} ${errorText}`);
-  }
+  ls: (args) => {
+    const target = args[0] ? resolvePath(args[0]) : process.cwd();
+    const entries = listDirectory(target);
+    return entries.length ? entries.join('\n') : '(empty directory)';
+  },
 
-  const data = await response.json();
-  const message = data?.choices?.[0]?.message?.content;
+  date: () => new Date().toString(),
 
-  return message?.trim() || 'No response returned by the AI provider.';
-}
+  history: (_, context) => {
+    if (!context.state.history.length) {
+      return 'No commands in history.';
+    }
+    return context.state.history.map((entry, index) => `${index + 1}. ${entry}`).join('\n');
+  },
 
-export function getSystemInfo() {
-  return {
-    platform: process.platform,
-    arch: process.arch,
-    node: process.version,
-    cwd: process.cwd(),
-    home: os.homedir(),
-    temp: os.tmpdir(),
-  };
-}
+  clear: () => {
+    console.clear();
+    return '';
+  },
 
-export function listDirectory(targetDir = process.cwd()) {
-  try {
-    const entries = fs.readdirSync(targetDir, { withFileTypes: true });
-    return entries
-      .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
-      .sort((a, b) => a.localeCompare(b));
-  } catch (error) {
-    throw new Error(`Unable to read directory: ${targetDir}`);
-  }
-}
+  ask: async (args) => {
+    const prompt = args.join(' ');
+    if (!prompt) {
+      return 'Usage: ask <your question>';
+    }
+    return await askAI(prompt);
+  },
 
-export function readFileText(filePath) {
-  return fs.readFileSync(filePath, 'utf8');
-}
+  cat: (args) => {
+    const filePath = args.join(' ');
+    if (!filePath) {
+      return 'Usage: cat <file path>';
+    }
 
-export function resolvePath(inputPath) {
-  return path.resolve(process.cwd(), inputPath);
+    const resolved = resolvePath(filePath);
+    if (!fs.existsSync(resolved)) {
+      return `File not found: ${filePath}`;
+    }
+
+    return readFileText(resolved);
+  },
+
+  exit: () => {
+    process.exit(0);
+  },
+};
+
+export function getCommandList() {
+  return Object.keys(commands);
 }

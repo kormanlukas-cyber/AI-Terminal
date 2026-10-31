@@ -1,88 +1,81 @@
-import fs from 'node:fs';
-import os from 'node:os';
+import readline from 'node:readline';
 import chalk from 'chalk';
-import { askAI, getSystemInfo, listDirectory, resolvePath, readFileText } from './ai.js';
+import { commands } from './commands.js';
 
-export const commands = {
-  help: () => {
-    return [
-      'Available commands:',
-      '  help            Show commands',
-      '  status          Show terminal status',
-      '  echo <text>     Print a message',
-      '  pwd             Show current working directory',
-      '  ls [path]       List directory contents',
-      '  date            Show current date and time',
-      '  history         Show command history',
-      '  clear           Clear the terminal',
-      '  ask <prompt>    Ask an AI question',
-      '  cat <file>      Read a file',
-      '  exit            Quit the terminal',
-    ].join('\n');
-  },
+export function createTerminal() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
 
-  status: () => {
-    const info = getSystemInfo();
-    return [
-      'AI Terminal status',
-      `Platform: ${info.platform}`,
-      `Arch: ${info.arch}`,
-      `Node: ${info.node}`,
-      `Working directory: ${info.cwd}`,
-    ].join('\n');
-  },
+  const state = {
+    history: [],
+  };
 
-  echo: (args) => args.join(' ') || 'No message provided.',
+  const printBanner = () => {
+    console.log(chalk.bold.cyan('AI Terminal'));
+    console.log(chalk.gray('Type "help" to see available commands.'));
+  };
 
-  pwd: () => process.cwd(),
+  const printPrompt = () => {
+    process.stdout.write(chalk.magenta('ai-terminal> '));
+  };
 
-  ls: (args) => {
-    const target = args[0] ? resolvePath(args[0]) : process.cwd();
-    const entries = listDirectory(target);
-    return entries.length ? entries.join('\n') : '(empty directory)';
-  },
-
-  date: () => new Date().toString(),
-
-  history: (_, context) => {
-    if (!context.state.history.length) {
-      return 'No commands in history.';
-    }
-    return context.state.history.map((entry, index) => `${index + 1}. ${entry}`).join('\n');
-  },
-
-  clear: () => {
-    console.clear();
-    return '';
-  },
-
-  ask: async (args) => {
-    const prompt = args.join(' ');
-    if (!prompt) {
-      return 'Usage: ask <your question>';
-    }
-    return await askAI(prompt);
-  },
-
-  cat: (args) => {
-    const filePath = args.join(' ');
-    if (!filePath) {
-      return 'Usage: cat <file path>';
+  const handleCommand = async (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      printPrompt();
+      return;
     }
 
-    const resolved = resolvePath(filePath);
-    if (!fs.existsSync(resolved)) {
-      return `File not found: ${filePath}`;
+    state.history.push(trimmed);
+
+    const [commandName, ...args] = trimmed.split(/\s+/);
+    const handler = commands[commandName];
+
+    if (!handler) {
+      console.log(chalk.red(`Unknown command: ${commandName}`));
+      printPrompt();
+      return;
     }
 
-    return readFileText(resolved);
-  },
+    try {
+      const result = await handler(args, { state, rl, printPrompt });
 
-  exit: () => {
-    process.exit(0);
-  },
-};
+      if (typeof result === 'string' && result.length > 0) {
+        console.log(chalk.green(result));
+      }
+    } catch (error) {
+      console.log(chalk.red(`Error: ${error.message}`));
+    }
 
-export function getCommandList() {
-  return Object.keys(commands);
+    printPrompt();
+  };
+
+  return {
+    rl,
+    start() {
+      printBanner();
+      printPrompt();
+
+      rl.on('line', async (line) => {
+        await handleCommand(line);
+      });
+
+      rl.on('SIGINT', () => {
+        console.log(chalk.yellow('\nSession interrupted. Type "exit" to quit.'));
+        printPrompt();
+      });
+
+      rl.on('close', () => {
+        console.log(chalk.gray('\nSession closed.'));
+        process.exit(0);
+      });
+    },
+    close() {
+      rl.close();
+    },
+    state,
+  };
 }
