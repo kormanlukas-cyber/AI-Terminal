@@ -94,21 +94,23 @@ h1 {
 }
 
 .chat-panel {
-  min-height: 320px;
-  max-height: 52vh;
+  min-height: 280px;
+  max-height: 46vh;
   overflow-y: auto;
   padding: 18px 20px;
   background: rgba(18, 26, 47, 0.4);
 }
 
-.tool-log-panel {
+.tool-log-panel,
+.insight-panel {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: rgba(12, 18, 31, 0.8);
   padding: 12px 20px;
 }
 
-.tool-log-header {
+.tool-log-header,
+.insight-header {
   margin-bottom: 8px;
   color: var(--muted);
   font-size: 0.78rem;
@@ -150,6 +152,12 @@ h1 {
 .tool-log-item.error {
   border-color: rgba(255, 107, 122, 0.4);
   color: var(--danger);
+}
+
+.insight-body {
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .message {

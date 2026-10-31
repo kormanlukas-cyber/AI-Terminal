@@ -5,6 +5,7 @@ const clearBtn = document.getElementById('clearBtn');
 const modeSelect = document.getElementById('modeSelect');
 const toolLogList = document.getElementById('toolLogList');
 const toolLogPanel = document.getElementById('toolLogPanel');
+const insightBody = document.getElementById('insightBody');
 
 const sessionKey = 'ai-terminal-session-id';
 const sessionId = localStorage.getItem(sessionKey) || crypto.randomUUID();
@@ -29,6 +30,18 @@ function renderToolLog(logEntries = []) {
     item.title = entry.detail || '';
     toolLogList.appendChild(item);
   });
+}
+
+function renderInsight(memory = {}) {
+  if (!insightBody) return;
+
+  if (!memory || !memory.architecture) {
+    insightBody.textContent = 'Ready.';
+    return;
+  }
+
+  const architecture = memory.architecture;
+  insightBody.textContent = `${architecture.summary}\n\nFiles: ${architecture.types.js.slice(0, 6).join(', ') || 'none'}${architecture.types.html.length ? `\nHTML: ${architecture.types.html.join(', ')}` : ''}${architecture.types.css.length ? `\nCSS: ${architecture.types.css.join(', ')}` : ''}`;
 }
 
 function addMessage(role, text) {
@@ -78,6 +91,7 @@ async function sendMessage(event) {
     }
 
     renderToolLog(data.toolLog || []);
+    if (data.memory) renderInsight(data.memory);
     addMessage('bot', data.reply || 'No response returned.');
   } catch (error) {
     placeholder.remove();
@@ -94,6 +108,7 @@ clearBtn.addEventListener('click', () => {
   `;
   localStorage.setItem(sessionKey, crypto.randomUUID());
   renderToolLog([]);
+  renderInsight({});
 });
 
 chatForm.addEventListener('submit', sendMessage);
@@ -103,4 +118,5 @@ if (chatPanel) {
 }
 
 renderToolLog([]);
+renderInsight({});
 

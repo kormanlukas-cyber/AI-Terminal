@@ -26,6 +26,7 @@ function normalizeSession(sessionId) {
       filesTouched: [],
       lastValidation: null,
       recentPlans: [],
+      architecture: null,
     },
   };
 
@@ -96,6 +97,19 @@ function writeFile(targetPath, content) {
   return `Wrote ${targetPath}`;
 }
 
+function patchFile(targetPath, oldText, newText) {
+  const safeTarget = resolveProjectPath(targetPath);
+  const current = fs.readFileSync(safeTarget, 'utf8');
+
+  if (!current.includes(oldText)) {
+    throw new Error(`Pattern not found in ${targetPath}`);
+  }
+
+  const updated = current.replace(oldText, newText);
+  fs.writeFileSync(safeTarget, updated, 'utf8');
+  return `Patched ${targetPath}`;
+}
+
 function searchFiles(query) {
   if (!query || !String(query).trim()) return [];
 
@@ -145,6 +159,7 @@ function safeShell(command) {
     /^head\s+.+$/i,
     /^tail\s+.+$/i,
     /^node\s+--check\s+.+$/i,
+    /^npm\s+run\s+(?:test|build)\s*$/i,
   ];
 
   const isAllowed = allowed.some((pattern) => pattern.test(trimmed));
@@ -181,6 +196,22 @@ function getProjectOverview() {
     root: __dirname,
     files,
     count: files.length,
+  };
+}
+
+function inferArchitecture() {
+  const files = listDirectory('.');
+  const jsFiles = files.filter((file) => file.endsWith('.js'));
+  const htmlFiles = files.filter((file) => file.endsWith('.html'));
+  const cssFiles = files.filter((file) => file.endsWith('.css'));
+
+  return {
+    types: {
+      js: jsFiles,
+      html: htmlFiles,
+      css: cssFiles,
+    },
+    summary: 'This project is a lightweight web application with JavaScript server logic, browser UI files, and a small local tool layer.',
   };
 }
 
@@ -265,6 +296,14 @@ function executeToolCall(sessionId, toolCall) {
       const content = args.content || '';
       const result = writeFile(target, content);
       recordToolLog(sessionId, 'write_file', 'ok', result);
+      return result;
+    }
+    case 'patch_file': {
+      const target = args.path || '';
+      const oldText = args.oldText || '';
+      const newText = args.newText || '';
+      const result = patchFile(target, oldText, newText);
+      recordToolLog(sessionId, 'patch_file', 'ok', result);
       return result;
     }
     default:
@@ -352,6 +391,22 @@ const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'patch_file',
+      description: 'Replace a known text snippet inside an existing project file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path from the project root' },
+          oldText: { type: 'string', description: 'Current text to find in the file' },
+          newText: { type: 'string', description: 'Replacement text to write' },
+        },
+        required: ['path', 'oldText', 'newText'],
+      },
+    },
+  },
 ];
 
 async function runAgent(message, sessionId, sessionMessages) {
@@ -365,7 +420,8 @@ Rules:
 - use read-only shell commands when needed
 - if a change is required, patch only the relevant files
 - after planned edits, run a validation step
-- summarize the result clearly`;
+- summarize the result clearly
+- if the task is ambiguous, inspect before acting`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -521,7 +577,13 @@ app.post('/api/chat', async (req, res) => {
   try {
     let reply;
     session.toolLog = session.toolLog || [];
-    session.memory = session.memory || { projectOverview: null, filesTouched: [], lastValidation: null, recentPlans: [] };
+    session.memory = session.memory || {
+      projectOverview: null,
+      filesTouched: [],
+      lastValidation: null,
+      recentPlans: [],
+      architecture: null,
+    };
 
     if (mode === 'agent') {
       recordToolLog(activeSessionId, 'plan', 'pending', `Planning how to answer: ${userMessage}`);
@@ -531,6 +593,8 @@ app.post('/api/chat', async (req, res) => {
       } else {
         const overview = getProjectOverview();
         session.memory.projectOverview = overview;
+        session.memory.architecture = inferArchitecture();
+
         const introspection = `Project root: ${overview.root}\nFiles: ${overview.files.join(', ')}`;
         recordToolLog(activeSessionId, 'inspect', 'ok', introspection);
 

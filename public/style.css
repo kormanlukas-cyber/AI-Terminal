@@ -40,6 +40,13 @@
         <ul id="toolLogList" class="tool-log-list"></ul>
       </aside>
 
+      <section class="insight-panel" id="insightPanel">
+        <div class="insight-header">
+          <strong>Project insight</strong>
+        </div>
+        <div id="insightBody" class="insight-body">Ready.</div>
+      </section>
+
       <form id="chatForm" class="composer">
         <input
           id="messageInput"
