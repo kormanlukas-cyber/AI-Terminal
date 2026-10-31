@@ -1,63 +1,29 @@
-# AI Terminal
+# Architecture Overview
 
-A terminal-first AI agent that combines a local command shell with OpenAI-compatible AI assistance and built-in tool execution.
+This project is a lightweight AI terminal application with a browser-based interface and a command-line fallback. It combines a simple Express app with a local CLI shell and an OpenAI-compatible chat endpoint.
+
+## High-level flow
 
 ```mermaid
 flowchart TD
-    User["User"] --> Shell["Interactive Terminal"]
-    Shell --> Router["Command Router"]
-    Router --> Local["Built-in Commands"]
-    Router --> Agent["Agent Layer"]
-    Agent --> Tools["Tool Layer"]
-    Tools --> Filesystem["Filesystem Tools"]
-    Tools --> System["System + Shell Tools"]
-    Agent --> AI["AI Adapter"]
-    AI --> LLM["OpenAI-compatible model"]
-
-    subgraph App["Application Layer"]
-        Shell
-        Router
-        Local
-        Agent
-        Tools
-        AI
-    end
-
-    subgraph Runtime["Runtime Environment"]
-        Node["Node.js"]
-        Console["Terminal / Console"]
-    end
-
-    Shell --> Node
-    Shell --> Console
+    User["User"] --> Browser["Browser UI"]
+    Browser --> API["Express API"]
+    API --> OpenAI["OpenAI-compatible endpoint"]
+    User --> CLI["Terminal CLI"]
+    CLI --> Commands["Local commands"]
 ```
 
 ## Components
 
-- `src/index.js`
-  - Starts the terminal session.
+- `server.js` starts the web app and chat endpoint
+- `public/` contains the browser interface
+- `src/terminal.js` runs the CLI shell
+- `src/commands.js` defines terminal commands
+- `src/ai.js` handles AI requests
+- `src/tools.js` exposes helper utilities for filesystem/system behavior
 
-- `src/terminal.js`
-  - Manages the readline loop, prompt display, history, and command execution.
+## Deployment modes
 
-- `src/commands.js`
-  - Defines built-in commands and command dispatch behavior.
-
-- `src/agent.js`
-  - Coordinates the agent flow and exposes tool execution.
-
-- `src/tools.js`
-  - Exposes filesystem and system helper functions.
-
-- `src/ai.js`
-  - Performs AI requests using the OpenAI API format.
-
-## Runtime Flow
-
-1. The user types a command.
-2. The terminal parses the input and resolves the matching command.
-3. Built-in commands run locally in Node.js.
-4. The `ask` command sends a prompt to the AI provider.
-5. The `agent` command uses instructions and tool context to decide how to respond.
-6. Tool-backed requests can read files, inspect directories, or run shell commands.
-7. Output is printed to the terminal and saved to command history.
+- local web app via `npm start`
+- local CLI via `npm run cli`
+- Docker via `docker build` / `docker compose`

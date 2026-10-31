@@ -1,7 +1,5 @@
 import readline from 'node:readline';
-import chalk from 'chalk';
 import { commands } from './commands.js';
-import { Agent, buildToolMap } from './agent.js';
 
 export function createTerminal() {
   const rl = readline.createInterface({
@@ -10,76 +8,41 @@ export function createTerminal() {
     terminal: true,
   });
 
-  const state = {
-    history: [],
-  };
-
-  const tools = buildToolMap();
-  const agent = new Agent(tools);
-
-  const printBanner = () => {
-    console.log(chalk.bold.cyan('AI Terminal'));
-    console.log(chalk.gray('Type "help" to see available commands.'));
-  };
-
-  const printPrompt = () => {
-    process.stdout.write(chalk.magenta('ai-terminal> '));
-  };
-
-  const handleCommand = async (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      printPrompt();
-      return;
-    }
-
-    state.history.push(trimmed);
-
-    const [commandName, ...args] = trimmed.split(/\s+/);
-    const handler = commands[commandName];
-
-    if (!handler) {
-      const fallback = await agent.run(trimmed);
-      console.log(chalk.green(fallback));
-      printPrompt();
-      return;
-    }
-
-    try {
-      const result = await handler(args, { state, tools, agent, rl, printPrompt });
-      if (typeof result === 'string' && result.length > 0) {
-        console.log(chalk.green(result));
-      }
-    } catch (error) {
-      console.log(chalk.red(`Error: ${error.message}`));
-    }
-
-    printPrompt();
-  };
-
   return {
     rl,
-    start() {
-      printBanner();
-      printPrompt();
+    async start() {
+      console.log('AI Terminal ready. Type "help" to see commands.');
 
-      rl.on('line', async (line) => {
-        await handleCommand(line);
-      });
+      const handleInput = (input) => {
+        const trimmed = input.trim();
 
-      rl.on('SIGINT', () => {
-        console.log(chalk.yellow('\nSession interrupted. Type "exit" to quit.'));
-        printPrompt();
-      });
+        if (!trimmed) {
+          return;
+        }
+
+        const [command, ...args] = trimmed.split(/\s+/);
+        const handler = commands[command];
+
+        if (!handler) {
+          console.log(`Command not found: ${command}`);
+          return;
+        }
+
+        const result = handler(args.join(' '));
+        if (result !== undefined) {
+          console.log(result);
+        }
+      };
+
+      rl.on('line', handleInput);
 
       rl.on('close', () => {
-        console.log(chalk.gray('\nSession closed.'));
+        console.log('Session closed.');
         process.exit(0);
       });
     },
     close() {
       rl.close();
     },
-    state,
   };
 }

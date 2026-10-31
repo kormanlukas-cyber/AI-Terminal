@@ -30,7 +30,10 @@ export function resolvePath(inputPath) {
 
 export function runShell(command) {
   try {
-    return execSync(command, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return execSync(command, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
   } catch (error) {
     return error.stdout?.toString() || error.message;
   }

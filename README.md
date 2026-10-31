@@ -1,68 +1,62 @@
-const chatForm = document.getElementById('chatForm');
-const chatPanel = document.getElementById('chatPanel');
-const messageInput = document.getElementById('messageInput');
-const clearBtn = document.getElementById('clearBtn');
+# AI Terminal
 
-function addMessage(role, text) {
-  const wrapper = document.createElement('div');
-  wrapper.className = `message ${role}`;
+A lightweight AI-first terminal and browser app built for local experimentation and deployment.
 
-  const label = document.createElement('strong');
-  label.textContent = role === 'user' ? 'You' : 'Assistant';
+## Features
 
-  const textNode = document.createElement('p');
-  textNode.textContent = text;
+- interactive command-line shell
+- browser-based chat UI
+- OpenAI-compatible AI chat endpoint
+- Docker support
+- local and web deployment modes
 
-  wrapper.appendChild(label);
-  wrapper.appendChild(textNode);
-  chatPanel.appendChild(wrapper);
-  chatPanel.scrollTop = chatPanel.scrollHeight;
-}
+## Quick start
 
-async function sendMessage(event) {
-  event.preventDefault();
+```bash
+npm install
+cp .env.example .env
+npm start
+```
 
-  const text = messageInput.value.trim();
-  if (!text) return;
+Open http://localhost:3000 in the browser.
 
-  addMessage('user', text);
-  messageInput.value = '';
+## CLI mode
 
-  const placeholder = document.createElement('div');
-  placeholder.className = 'message bot';
-  placeholder.innerHTML = '<strong>Assistant</strong><p>Thinking...</p>';
-  chatPanel.appendChild(placeholder);
+```bash
+npm run cli
+```
 
-  try {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
-    });
+## Commands in the CLI
 
-    const data = await response.json();
+```bash
+help
+status
+echo hello from AI Terminal
+exit
+```
 
-    placeholder.remove();
+## Environment variables
 
-    if (!response.ok) {
-      addMessage('bot', data.error || 'Something went wrong.');
-      return;
-    }
+Create a `.env` file:
 
-    addMessage('bot', data.reply || 'No response returned.');
-  } catch (error) {
-    placeholder.remove();
-    addMessage('bot', 'Unable to reach the AI service right now.');
-  }
-}
+```bash
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-4o-mini
+```
 
-clearBtn.addEventListener('click', () => {
-  chatPanel.innerHTML = `
-    <div class="message bot">
-      <strong>Assistant</strong>
-      <p>Conversation cleared. Ask me anything.</p>
-    </div>
-  `;
-});
+## Docker
 
-chatForm.addEventListener('submit', sendMessage);
+```bash
+docker build -t ai-terminal .
+docker run -it --rm --env-file .env ai-terminal
+```
+
+Or:
+
+```bash
+docker compose up --build
+```
+
+## Notes
+
+This app includes both a terminal interface and a browser-based chat UI. The browser version uses the OpenAI chat completion API, and the CLI mode is kept for local shell interactions.
